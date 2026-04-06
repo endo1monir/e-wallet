@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'db_helper.dart';
 
 void main() {
   runApp(const WalletApp());
@@ -19,25 +20,68 @@ class WalletApp extends StatelessWidget {
   }
 }
 
-// --- Data Model ---
 class Transaction {
+  final int? id;
   final double amount;
   final String type;
   final DateTime date;
-  Transaction({required this.amount, required this.type, required this.date});
+  Transaction(
+      {this.id,
+      required this.amount,
+      required this.type,
+      required this.date});
+
+  Map<String, dynamic> toMap() {
+    return {
+      'wallet_id': id,
+      'amount': amount,
+      'type': type,
+      'date': date.toIso8601String(),
+    };
+  }
+
+  factory Transaction.fromMap(Map<String, dynamic> map) {
+    return Transaction(
+      id: map['id'],
+      amount: map['amount'],
+      type: map['type'],
+      date: DateTime.parse(map['date']),
+    );
+  }
 }
 
 class Wallet {
+  int? id;
   String name;
   String number;
   double balance;
   List<Transaction> transactions;
 
   Wallet(
-      {required this.name,
+      {this.id,
+      required this.name,
       required this.number,
       this.balance = 0.0,
       required this.transactions});
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'number': number,
+      'balance': balance,
+    };
+  }
+
+  factory Wallet.fromMap(Map<String, dynamic> map) {
+    return Wallet(
+      id: map['id'],
+      name: map['name'],
+      number: map['number'],
+      balance: map['balance'],
+      transactions: [],
+    );
+  }
 
   double get dailyTotal {
     double sum = 0;
@@ -64,7 +108,6 @@ class Wallet {
       (dailyTotal >= 60000 || monthlyTotal >= 200000 || balance >= 200000);
 }
 
-// --- Main Screen ---
 class WalletListScreen extends StatefulWidget {
   const WalletListScreen({super.key});
   @override
@@ -74,7 +117,26 @@ class WalletListScreen extends StatefulWidget {
 class WalletListScreenState extends State<WalletListScreen> {
   List<Wallet> wallets = [];
 
-  // Function to show Add/Edit Dialog
+  @override
+  void initState() {
+    super.initState();
+    _loadWallets();
+  }
+
+  Future<void> _loadWallets() async {
+    final dbWallets = await DatabaseHelper.instance.getWallets();
+    List<Wallet> loaded = [];
+    for (var wMap in dbWallets) {
+      var wallet = Wallet.fromMap(wMap);
+      final dbTrans =
+          await DatabaseHelper.instance.getTransactions(wallet.id!);
+      wallet.transactions =
+          dbTrans.map((t) => Transaction.fromMap(t)).toList();
+      loaded.add(wallet);
+    }
+    setState(() => wallets = loaded);
+  }
+
   void _showWalletDialog({Wallet? wallet, int? index}) {
     var nCtrl = TextEditingController(text: wallet?.name ?? "");
     var pCtrl = TextEditingController(text: wallet?.number ?? "");
@@ -99,19 +161,35 @@ class WalletListScreenState extends State<WalletListScreen> {
           TextButton(
               onPressed: () => Navigator.pop(ctx), child: const Text("إلغاء")),
           ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 if (nCtrl.text.isNotEmpty) {
-                  setState(() {
-                    if (wallet == null) {
-                      wallets.add(Wallet(
-                          name: nCtrl.text,
-                          number: pCtrl.text,
-                          transactions: []));
-                    } else {
+                  if (wallet == null) {
+                    final id = await DatabaseHelper.instance.insertWallet({
+                      'name': nCtrl.text,
+                      'number': pCtrl.text,
+                      'balance': 0.0,
+                    });
+                    setState(() {
+                      wallets.insert(
+                          0,
+                          Wallet(
+                              id: id,
+                              name: nCtrl.text,
+                              number: pCtrl.text,
+                              transactions: []));
+                    });
+                  } else {
+                    await DatabaseHelper.instance.updateWallet({
+                      'id': wallet.id,
+                      'name': nCtrl.text,
+                      'number': pCtrl.text,
+                      'balance': wallet.balance,
+                    });
+                    setState(() {
                       wallets[index!].name = nCtrl.text;
                       wallets[index].number = pCtrl.text;
-                    }
-                  });
+                    });
+                  }
                   Navigator.pop(ctx);
                 }
               },
@@ -132,7 +210,9 @@ class WalletListScreenState extends State<WalletListScreen> {
           TextButton(
               onPressed: () => Navigator.pop(ctx), child: const Text("تراجع")),
           TextButton(
-              onPressed: () {
+              onPressed: () async {
+                await DatabaseHelper.instance
+                    .deleteWallet(wallets[index].id!);
                 setState(() => wallets.removeAt(index));
                 Navigator.pop(ctx);
               },
@@ -192,7 +272,7 @@ class WalletListScreenState extends State<WalletListScreen> {
                       context,
                       MaterialPageRoute(
                           builder: (context) => WalletDetailScreen(
-                              wallet: w, onUpdate: () => setState(() {}))),
+                              wallet: w, onUpdate: _loadWallets)),
                     ),
                   ),
                 );
@@ -202,7 +282,6 @@ class WalletListScreenState extends State<WalletListScreen> {
   }
 }
 
-// --- Detail Screen ---
 class WalletDetailScreen extends StatefulWidget {
   final Wallet wallet;
   final VoidCallback onUpdate;
@@ -213,6 +292,21 @@ class WalletDetailScreen extends StatefulWidget {
 }
 
 class WalletDetailScreenState extends State<WalletDetailScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _loadTransactions();
+  }
+
+  Future<void> _loadTransactions() async {
+    final dbTrans =
+        await DatabaseHelper.instance.getTransactions(widget.wallet.id!);
+    setState(() {
+      widget.wallet.transactions =
+          dbTrans.map((t) => Transaction.fromMap(t)).toList();
+    });
+  }
+
   void _transact(String type) {
     var amtCtrl = TextEditingController();
     showDialog(
@@ -230,19 +324,29 @@ class WalletDetailScreenState extends State<WalletDetailScreen> {
           TextButton(
               onPressed: () => Navigator.pop(ctx), child: const Text("إلغاء")),
           ElevatedButton(
-              onPressed: () {
+              onPressed: () async {
                 double amt = double.tryParse(amtCtrl.text) ?? 0;
                 if (amt > 0) {
+                  double newBalance = type == 'sent'
+                      ? widget.wallet.balance - amt
+                      : widget.wallet.balance + amt;
+
+                  await DatabaseHelper.instance.insertTransaction({
+                    'wallet_id': widget.wallet.id,
+                    'amount': amt,
+                    'type': type,
+                    'date': DateTime.now().toIso8601String(),
+                  });
+
+                  await DatabaseHelper.instance
+                      .updateBalance(widget.wallet.id!, newBalance);
+
                   setState(() {
                     widget.wallet.transactions.insert(
                         0,
                         Transaction(
                             amount: amt, type: type, date: DateTime.now()));
-                    if (type == 'sent') {
-                      widget.wallet.balance -= amt;
-                    } else {
-                      widget.wallet.balance += amt;
-                    }
+                    widget.wallet.balance = newBalance;
                   });
                   widget.onUpdate();
                   Navigator.pop(ctx);
@@ -254,11 +358,49 @@ class WalletDetailScreenState extends State<WalletDetailScreen> {
     );
   }
 
+  void _confirmDeleteHistory() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("حذف السجل", textAlign: TextAlign.right),
+        content: const Text("هل أنت متأكد من حذف جميع المعاملات؟",
+            textAlign: TextAlign.right),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text("تراجع")),
+          TextButton(
+              onPressed: () async {
+                await DatabaseHelper.instance
+                    .deleteTransactions(widget.wallet.id!);
+                await DatabaseHelper.instance
+                    .updateBalance(widget.wallet.id!, 0.0);
+                setState(() {
+                  widget.wallet.transactions.clear();
+                  widget.wallet.balance = 0.0;
+                });
+                widget.onUpdate();
+                Navigator.pop(ctx);
+              },
+              child: const Text("حذف", style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final w = widget.wallet;
     return Scaffold(
-      appBar: AppBar(title: Text(w.name), centerTitle: true),
+      appBar: AppBar(
+          title: Text(w.name),
+          centerTitle: true,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.delete_sweep),
+              onPressed: _confirmDeleteHistory,
+              tooltip: 'حذف السجل',
+            ),
+          ]),
       body: Column(children: [
         Container(
           width: double.infinity,
@@ -300,23 +442,26 @@ class WalletDetailScreenState extends State<WalletDetailScreen> {
         const Text("سجل المعاملات",
             style: TextStyle(fontWeight: FontWeight.bold)),
         Expanded(
-          child: ListView.builder(
-            itemCount: w.transactions.length,
-            itemBuilder: (context, i) {
-              final t = w.transactions[i];
-              return ListTile(
-                trailing: Icon(
-                    t.type == 'sent'
-                        ? Icons.arrow_circle_up
-                        : Icons.arrow_circle_down,
-                    color: t.type == 'sent' ? Colors.red : Colors.green),
-                title: Text("${t.amount} ج.م", textAlign: TextAlign.right),
-                subtitle: Text(DateFormat('yyyy-MM-dd HH:mm').format(t.date),
-                    textAlign: TextAlign.right),
-                leading: Text(t.type == 'sent' ? "سحب" : "إيداع"),
-              );
-            },
-          ),
+          child: w.transactions.isEmpty
+              ? const Center(child: Text("لا توجد معاملات"))
+              : ListView.builder(
+                  itemCount: w.transactions.length,
+                  itemBuilder: (context, i) {
+                    final t = w.transactions[i];
+                    return ListTile(
+                      trailing: Icon(
+                          t.type == 'sent'
+                              ? Icons.arrow_circle_up
+                              : Icons.arrow_circle_down,
+                          color: t.type == 'sent' ? Colors.red : Colors.green),
+                      title: Text("${t.amount} ج.م", textAlign: TextAlign.right),
+                      subtitle: Text(
+                          DateFormat('yyyy-MM-dd HH:mm').format(t.date),
+                          textAlign: TextAlign.right),
+                      leading: Text(t.type == 'sent' ? "سحب" : "إيداع"),
+                    );
+                  },
+                ),
         ),
       ]),
     );
