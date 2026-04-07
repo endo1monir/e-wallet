@@ -87,7 +87,8 @@ class Wallet {
     double sum = 0;
     for (var t in transactions) {
       if (t.date.day == DateTime.now().day &&
-          t.date.month == DateTime.now().month) {
+          t.date.month == DateTime.now().month &&
+          t.type == 'sent') {
         sum += t.amount;
       }
     }
@@ -97,7 +98,8 @@ class Wallet {
   double get monthlyTotal {
     double sum = 0;
     for (var t in transactions) {
-      if (t.date.month == DateTime.now().month) {
+      if (t.date.month == DateTime.now().month &&
+          t.type == 'sent') {
         sum += t.amount;
       }
     }
