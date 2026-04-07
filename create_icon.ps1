@@ -1,0 +1,17 @@
+Add-Type -AssemblyName System.Drawing
+$bmp = New-Object System.Drawing.Bitmap(1024,1024)
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$bgBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(46,125,50))
+$g.FillRectangle($bgBrush, 0, 0, 1024, 1024)
+$whiteBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+$pen = New-Object System.Drawing.Pen($whiteBrush, 24)
+$rect = New-Object System.Drawing.Rectangle(200, 280, 624, 464)
+$g.DrawRectangle($pen, $rect)
+$g.DrawLine($pen, 200, 380, 824, 380)
+$g.FillEllipse($whiteBrush, 640, 440, 100, 100)
+$font = New-Object System.Drawing.Font("Arial", 120, [System.Drawing.FontStyle]::Bold)
+$g.DrawString("E", $font, $whiteBrush, 380, 520)
+$bmp.Save("D:\xampp\htdocs\e-wallet\app_icon.png", [System.Drawing.Imaging.ImageFormat]::Png)
+$bmp.Dispose()
+$g.Dispose()
+Write-Host "Icon created successfully"
